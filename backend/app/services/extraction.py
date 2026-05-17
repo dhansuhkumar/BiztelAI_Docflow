@@ -4,8 +4,6 @@ import httpx
 import base64
 from pathlib import Path
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-nano-12b-v2-vl:free")
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 EXTRACTION_PROMPT = """
@@ -78,14 +76,23 @@ async def extract_from_document(file_path: str) -> list[dict]:
     Send document to OpenRouter vision model and extract ALL rows as a list of dicts.
     Returns a list — even single-row documents return a list of one.
     """
-    if not OPENROUTER_API_KEY:
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Read env vars at runtime (not import time) so deployment env vars are available
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    model = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-nano-12b-v2-vl:free")
+
+    if not api_key:
         raise ValueError("OPENROUTER_API_KEY environment variable is not set")
+
+    logger.info(f"Starting extraction for {file_path} using model {model}")
 
     b64_data, mime_type = encode_image_base64(file_path)
     data_uri = f"data:{mime_type};base64,{b64_data}"
 
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": model,
         "messages": [
             {
                 "role": "user",
@@ -100,7 +107,7 @@ async def extract_from_document(file_path: str) -> list[dict]:
     }
 
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
@@ -114,16 +121,34 @@ async def extract_from_document(file_path: str) -> list[dict]:
         response.raise_for_status()
         data = response.json()
 
-    raw_text = data["choices"][0]["message"]["content"].strip()
+    # Safely extract the response content
+    choices = data.get("choices", [])
+    if not choices:
+        raise ValueError(f"OpenRouter returned no choices. Response: {json.dumps(data)[:500]}")
 
+    raw_text = choices[0].get("message", {}).get("content", "").strip()
+
+    if not raw_text:
+        raise ValueError("OpenRouter returned empty content")
+
+    logger.info(f"Raw AI response (first 300 chars): {raw_text[:300]}")
+
+    # Strip markdown code fences if present
     if raw_text.startswith("```"):
         lines = raw_text.split("\n")
         lines = [l for l in lines if not l.strip().startswith("```")]
         raw_text = "\n".join(lines).strip()
 
-    parsed = json.loads(raw_text)
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse AI response as JSON: {e}\nRaw text: {raw_text[:500]}")
 
     if isinstance(parsed, dict):
         parsed = [parsed]
 
+    if not isinstance(parsed, list):
+        raise ValueError(f"Expected list from AI, got {type(parsed).__name__}")
+
+    logger.info(f"Successfully extracted {len(parsed)} row(s)")
     return parsed

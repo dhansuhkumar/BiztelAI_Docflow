@@ -55,18 +55,24 @@ async def upload_document(
 
 async def process_document(doc_id: int, file_path: str):
     """Background task: extract ALL rows + validate each, then save to DB."""
+    import logging
+    logger = logging.getLogger(__name__)
+
     from app.models.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Document).where(Document.id == doc_id))
         doc = result.scalar_one_or_none()
         if not doc:
+            logger.error(f"Document {doc_id} not found in DB")
             return
 
         doc.status = "processing"
         await db.commit()
 
         try:
+            logger.info(f"Starting AI extraction for document {doc_id}: {file_path}")
             rows = await extract_from_document(file_path)
+            logger.info(f"Extraction returned {len(rows)} row(s) for document {doc_id}")
 
             for row in rows:
                 confidence_scores = row.get("confidence_scores", {})
@@ -96,10 +102,12 @@ async def process_document(doc_id: int, file_path: str):
 
             doc.status = "extracted"
             await db.commit()
+            logger.info(f"Document {doc_id} extraction complete — status set to 'extracted'")
 
         except Exception as e:
+            logger.error(f"Extraction FAILED for document {doc_id}: {e}", exc_info=True)
             doc.status = "failed"
-            doc.error_message = str(e)
+            doc.error_message = str(e)[:1000]
             await db.commit()
 
 

@@ -85,9 +85,21 @@ export default function ReviewPage() {
     load()
   }, [id])
 
+  const pollCountRef = useRef(0)
+  const MAX_POLLS = 60 // ~3 minutes at 3s intervals
+
   useEffect(() => {
     if (doc?.status === 'processing' || doc?.status === 'uploaded') {
-      pollRef.current = setInterval(load, 3000)
+      pollCountRef.current = 0
+      pollRef.current = setInterval(() => {
+        pollCountRef.current += 1
+        if (pollCountRef.current >= MAX_POLLS) {
+          clearInterval(pollRef.current)
+          setDoc(prev => prev ? { ...prev, status: 'failed', error_message: 'Extraction timed out. The AI service may be unavailable — please try re-uploading.' } : prev)
+          return
+        }
+        load()
+      }, 3000)
     } else {
       clearInterval(pollRef.current)
     }

@@ -10,7 +10,7 @@ from app.api.documents import router
 
 app = FastAPI(title="DocFlow API", version="1.0.0")
 
-origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")]
 
 app.add_middleware(
     CORSMiddleware,
