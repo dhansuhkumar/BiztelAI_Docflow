@@ -165,9 +165,6 @@ npm run dev
 - Free-tier OpenRouter has rate limits
 - Large PDFs may exceed free-tier context limits
 
-## License
-
-MIT
 
 ## AI Workflow
 
