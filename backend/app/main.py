@@ -28,6 +28,11 @@ async def startup():
     await init_db()
 
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "DocFlow API"}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
