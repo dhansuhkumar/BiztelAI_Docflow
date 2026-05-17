@@ -16,6 +16,7 @@ export const uploadDocument = (file, onProgress) => {
 export const getDocuments = (params = {}) => api.get('/documents', { params })
 export const getDocument = (id) => api.get(`/documents/${id}`)
 export const updateRecord = (id, data) => api.patch(`/records/${id}`, data)
+export const retryDocument = (id) => api.post(`/documents/${id}/retry`)
 export const getDashboard = () => api.get('/dashboard')
 export const getPreviewUrl = (id) => `${api.defaults.baseURL}/documents/${id}/preview`
 

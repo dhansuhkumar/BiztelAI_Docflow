@@ -55,60 +55,100 @@ async def upload_document(
 
 async def process_document(doc_id: int, file_path: str):
     """Background task: extract ALL rows + validate each, then save to DB."""
-    import logging
-    logger = logging.getLogger(__name__)
+    import traceback
+    print(f"[DOCFLOW] Background task STARTED for doc_id={doc_id}, file={file_path}", flush=True)
 
-    from app.models.database import AsyncSessionLocal
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Document).where(Document.id == doc_id))
-        doc = result.scalar_one_or_none()
-        if not doc:
-            logger.error(f"Document {doc_id} not found in DB")
-            return
+    try:
+        from app.models.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Document).where(Document.id == doc_id))
+            doc = result.scalar_one_or_none()
+            if not doc:
+                print(f"[DOCFLOW] ERROR: Document {doc_id} not found in DB", flush=True)
+                return
 
-        doc.status = "processing"
-        await db.commit()
-
-        try:
-            logger.info(f"Starting AI extraction for document {doc_id}: {file_path}")
-            rows = await extract_from_document(file_path)
-            logger.info(f"Extraction returned {len(rows)} row(s) for document {doc_id}")
-
-            for row in rows:
-                confidence_scores = row.get("confidence_scores", {})
-                validation_errors = validate_record(row)
-                overall_conf = compute_overall_confidence(confidence_scores)
-
-                record = ExtractedRecord(
-                    document_id=doc_id,
-                    row_number=row.get("row_number", 1),
-                    date=row.get("date"),
-                    shift=row.get("shift"),
-                    employee_number=row.get("employee_number"),
-                    operation_code=row.get("operation_code"),
-                    machine_number=row.get("machine_number"),
-                    work_order_number=row.get("work_order_number"),
-                    quantity_produced=row.get("quantity_produced"),
-                    time_taken_hours=row.get("time_taken_hours"),
-                    supervisor_name=row.get("supervisor_name"),
-                    remarks=row.get("remarks"),
-                    confidence_scores=confidence_scores,
-                    validation_errors=validation_errors,
-                    has_validation_errors=len([e for e in validation_errors if e["severity"] == "error"]) > 0,
-                    overall_confidence=overall_conf,
-                    raw_extraction=row,
-                )
-                db.add(record)
-
-            doc.status = "extracted"
+            doc.status = "processing"
             await db.commit()
-            logger.info(f"Document {doc_id} extraction complete — status set to 'extracted'")
+            print(f"[DOCFLOW] Document {doc_id} status set to 'processing'", flush=True)
 
-        except Exception as e:
-            logger.error(f"Extraction FAILED for document {doc_id}: {e}", exc_info=True)
-            doc.status = "failed"
-            doc.error_message = str(e)[:1000]
-            await db.commit()
+            try:
+                print(f"[DOCFLOW] Calling extract_from_document for doc {doc_id}...", flush=True)
+                rows = await extract_from_document(file_path)
+                print(f"[DOCFLOW] Extraction returned {len(rows)} row(s) for document {doc_id}", flush=True)
+
+                for row in rows:
+                    confidence_scores = row.get("confidence_scores", {})
+                    validation_errors = validate_record(row)
+                    overall_conf = compute_overall_confidence(confidence_scores)
+
+                    record = ExtractedRecord(
+                        document_id=doc_id,
+                        row_number=row.get("row_number", 1),
+                        date=row.get("date"),
+                        shift=row.get("shift"),
+                        employee_number=row.get("employee_number"),
+                        operation_code=row.get("operation_code"),
+                        machine_number=row.get("machine_number"),
+                        work_order_number=row.get("work_order_number"),
+                        quantity_produced=row.get("quantity_produced"),
+                        time_taken_hours=row.get("time_taken_hours"),
+                        supervisor_name=row.get("supervisor_name"),
+                        remarks=row.get("remarks"),
+                        confidence_scores=confidence_scores,
+                        validation_errors=validation_errors,
+                        has_validation_errors=len([e for e in validation_errors if e["severity"] == "error"]) > 0,
+                        overall_confidence=overall_conf,
+                        raw_extraction=row,
+                    )
+                    db.add(record)
+
+                doc.status = "extracted"
+                await db.commit()
+                print(f"[DOCFLOW] Document {doc_id} DONE — status='extracted', {len(rows)} records saved", flush=True)
+
+            except Exception as e:
+                print(f"[DOCFLOW] Extraction FAILED for doc {doc_id}: {e}", flush=True)
+                traceback.print_exc()
+                doc.status = "failed"
+                doc.error_message = str(e)[:1000]
+                await db.commit()
+
+    except Exception as e:
+        print(f"[DOCFLOW] CRITICAL ERROR in background task for doc {doc_id}: {e}", flush=True)
+        traceback.print_exc()
+
+
+
+@router.post("/documents/{doc_id}/retry")
+async def retry_document(
+    doc_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Re-trigger extraction for a failed or stuck document."""
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(404, "Document not found.")
+
+    if doc.status not in ("failed", "uploaded", "processing"):
+        raise HTTPException(400, f"Document is already '{doc.status}'. Cannot retry.")
+
+    # Delete old extracted records if any
+    old_records = await db.execute(
+        select(ExtractedRecord).where(ExtractedRecord.document_id == doc_id)
+    )
+    for rec in old_records.scalars().all():
+        await db.delete(rec)
+
+    doc.status = "uploaded"
+    doc.error_message = None
+    await db.commit()
+
+    print(f"[DOCFLOW] Retry requested for doc {doc_id}, re-queuing extraction", flush=True)
+    background_tasks.add_task(process_document, doc.id, doc.file_path)
+
+    return {"document_id": doc.id, "status": "uploaded", "message": "Re-processing started."}
 
 
 @router.get("/documents")

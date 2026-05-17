@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { getDocument, updateRecord, getPreviewUrl } from '../utils/api'
+import { getDocument, updateRecord, getPreviewUrl, retryDocument } from '../utils/api'
 
 const FIELD_LABELS = {
   date: 'Date',
@@ -233,7 +233,24 @@ export default function ReviewPage() {
           borderRadius: '12px', padding: '20px',
         }}>
           <p style={{ fontWeight: 600, color: '#f87171', marginBottom: '6px' }}>Extraction Failed</p>
-          <p style={{ fontSize: '13px', color: '#9f1239', fontFamily: 'monospace' }}>{doc.error_message}</p>
+          <p style={{ fontSize: '13px', color: '#9f1239', fontFamily: 'monospace', marginBottom: '12px' }}>{doc.error_message}</p>
+          <button
+            className="btn btn-primary"
+            style={{ padding: '8px 20px', fontSize: '13px' }}
+            onClick={async () => {
+              try {
+                await retryDocument(id)
+                toast.success('Re-processing started!')
+                setDoc(prev => ({ ...prev, status: 'processing', error_message: null }))
+                setAllRecords([])
+                setSelectedRecord(null)
+              } catch (err) {
+                toast.error('Failed to retry: ' + (err.response?.data?.detail || err.message))
+              }
+            }}
+          >
+            🔄 Retry Extraction
+          </button>
         </div>
       )}
 

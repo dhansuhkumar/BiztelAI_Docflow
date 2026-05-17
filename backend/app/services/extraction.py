@@ -76,9 +76,6 @@ async def extract_from_document(file_path: str) -> list[dict]:
     Send document to OpenRouter vision model and extract ALL rows as a list of dicts.
     Returns a list — even single-row documents return a list of one.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-
     # Read env vars at runtime (not import time) so deployment env vars are available
     api_key = os.getenv("OPENROUTER_API_KEY")
     model = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-nano-12b-v2-vl:free")
@@ -86,9 +83,11 @@ async def extract_from_document(file_path: str) -> list[dict]:
     if not api_key:
         raise ValueError("OPENROUTER_API_KEY environment variable is not set")
 
-    logger.info(f"Starting extraction for {file_path} using model {model}")
+    print(f"[DOCFLOW] extract_from_document called: file={file_path}, model={model}", flush=True)
+    print(f"[DOCFLOW] API key present: {bool(api_key)} (length={len(api_key)})", flush=True)
 
     b64_data, mime_type = encode_image_base64(file_path)
+    print(f"[DOCFLOW] Image encoded: mime={mime_type}, base64_len={len(b64_data)}", flush=True)
     data_uri = f"data:{mime_type};base64,{b64_data}"
 
     payload = {
@@ -111,6 +110,8 @@ async def extract_from_document(file_path: str) -> list[dict]:
         "Content-Type": "application/json",
     }
 
+    print(f"[DOCFLOW] Sending request to OpenRouter ({OPENROUTER_BASE}/chat/completions)...", flush=True)
+
     async with httpx.AsyncClient(base_url=OPENROUTER_BASE) as client:
         response = await client.post(
             "/chat/completions",
@@ -118,6 +119,9 @@ async def extract_from_document(file_path: str) -> list[dict]:
             headers=headers,
             timeout=180.0,
         )
+        print(f"[DOCFLOW] OpenRouter response status: {response.status_code}", flush=True)
+        if response.status_code != 200:
+            print(f"[DOCFLOW] OpenRouter error body: {response.text[:500]}", flush=True)
         response.raise_for_status()
         data = response.json()
 
@@ -131,7 +135,7 @@ async def extract_from_document(file_path: str) -> list[dict]:
     if not raw_text:
         raise ValueError("OpenRouter returned empty content")
 
-    logger.info(f"Raw AI response (first 300 chars): {raw_text[:300]}")
+    print(f"[DOCFLOW] Raw AI response (first 300 chars): {raw_text[:300]}", flush=True)
 
     # Strip markdown code fences if present
     if raw_text.startswith("```"):
@@ -150,5 +154,5 @@ async def extract_from_document(file_path: str) -> list[dict]:
     if not isinstance(parsed, list):
         raise ValueError(f"Expected list from AI, got {type(parsed).__name__}")
 
-    logger.info(f"Successfully extracted {len(parsed)} row(s)")
+    print(f"[DOCFLOW] Successfully extracted {len(parsed)} row(s)", flush=True)
     return parsed
