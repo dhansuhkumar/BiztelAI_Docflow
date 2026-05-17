@@ -80,7 +80,7 @@ async def process_document(doc_id: int, file_path: str):
                 DATA_FIELDS = [
                     "date", "shift", "employee_number", "operation_code",
                     "machine_number", "work_order_number", "quantity_produced",
-                    "time_taken_hours", "supervisor_name", "remarks"
+                    "time_taken_hours"
                 ]
                 rows = [r for r in rows if any(r.get(f) not in (None, "", 0) for f in DATA_FIELDS)]
                 print(f"[DOCFLOW] After blank-row filter: {len(rows)} row(s) for document {doc_id}", flush=True)
@@ -101,8 +101,6 @@ async def process_document(doc_id: int, file_path: str):
                         work_order_number=row.get("work_order_number"),
                         quantity_produced=row.get("quantity_produced"),
                         time_taken_hours=row.get("time_taken_hours"),
-                        supervisor_name=row.get("supervisor_name"),
-                        remarks=row.get("remarks"),
                         confidence_scores=confidence_scores,
                         validation_errors=validation_errors,
                         has_validation_errors=len([e for e in validation_errors if e["severity"] == "error"]) > 0,
@@ -214,7 +212,7 @@ async def update_record(record_id: int, updates: dict, db: AsyncSession = Depend
     editable_fields = [
         "date", "shift", "employee_number", "operation_code",
         "machine_number", "work_order_number", "quantity_produced",
-        "time_taken_hours", "supervisor_name", "remarks"
+        "time_taken_hours"
     ]
     for field in editable_fields:
         if field in updates:
@@ -356,8 +354,6 @@ def record_to_dict(r: ExtractedRecord) -> dict:
         "work_order_number": r.work_order_number,
         "quantity_produced": r.quantity_produced,
         "time_taken_hours": r.time_taken_hours,
-        "supervisor_name": r.supervisor_name,
-        "remarks": r.remarks,
         "confidence_scores": r.confidence_scores,
         "validation_errors": r.validation_errors,
         "has_validation_errors": r.has_validation_errors,

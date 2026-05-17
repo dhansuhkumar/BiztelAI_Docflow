@@ -41,8 +41,6 @@ class ExtractedRecord(Base):
     work_order_number = Column(String, nullable=True)
     quantity_produced = Column(Integer, nullable=True)
     time_taken_hours = Column(Float, nullable=True)
-    supervisor_name = Column(String, nullable=True)
-    remarks = Column(Text, nullable=True)
 
     # Confidence scores per field (0.0 to 1.0)
     confidence_scores = Column(JSON, default={})

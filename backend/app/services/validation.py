@@ -122,8 +122,6 @@ def compute_overall_confidence(confidence_scores: dict) -> float:
         "work_order_number": 1.5,
         "quantity_produced": 1.5,
         "time_taken_hours": 1.0,
-        "supervisor_name": 0.8,
-        "remarks": 0.5,
     }
     total_weight = 0
     weighted_sum = 0

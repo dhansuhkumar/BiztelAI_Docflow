@@ -12,14 +12,12 @@ const FIELD_LABELS = {
   work_order_number: 'Work Order Number',
   quantity_produced: 'Quantity Produced',
   time_taken_hours: 'Time Taken (hrs)',
-  supervisor_name: 'Supervisor Name',
-  remarks: 'Remarks',
 }
 
 const FIELD_ORDER = [
   'date', 'shift', 'employee_number', 'operation_code',
   'machine_number', 'work_order_number', 'quantity_produced',
-  'time_taken_hours', 'supervisor_name', 'remarks'
+  'time_taken_hours'
 ]
 
 function ConfBadge({ value }) {
@@ -54,8 +52,6 @@ export default function ReviewPage() {
     work_order_number: rec.work_order_number || '',
     quantity_produced: rec.quantity_produced ?? '',
     time_taken_hours: rec.time_taken_hours ?? '',
-    supervisor_name: rec.supervisor_name || '',
-    remarks: rec.remarks || '',
   })
 
   const load = async () => {
@@ -412,15 +408,6 @@ export default function ReviewPage() {
                         <option value="Afternoon">Afternoon</option>
                         <option value="Night">Night</option>
                       </select>
-                    ) : field === 'remarks' ? (
-                      <textarea
-                        className={`form-input ${hasError ? 'input-error' : hasWarning ? 'input-warning' : ''}`}
-                        value={form[field] || ''}
-                        onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))}
-                        rows={3}
-                        disabled={selectedRecord.is_reviewed}
-                        style={{ resize: 'vertical' }}
-                      />
                     ) : (
                       <input
                         type={['quantity_produced', 'time_taken_hours'].includes(field) ? 'number' : 'text'}

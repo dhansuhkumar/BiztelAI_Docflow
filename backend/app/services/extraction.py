@@ -3,6 +3,7 @@ import json
 import httpx
 import base64
 from pathlib import Path
+import fitz  # PyMuPDF
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
@@ -25,8 +26,6 @@ Each element in the array represents one row and must follow this exact structur
   "work_order_number": "string or null",
   "quantity_produced": integer or null,
   "time_taken_hours": float or null,
-  "supervisor_name": "string or null",
-  "remarks": "string or null",
   "confidence_scores": {
     "date": 0.0-1.0,
     "shift": 0.0-1.0,
@@ -35,9 +34,7 @@ Each element in the array represents one row and must follow this exact structur
     "machine_number": 0.0-1.0,
     "work_order_number": 0.0-1.0,
     "quantity_produced": 0.0-1.0,
-    "time_taken_hours": 0.0-1.0,
-    "supervisor_name": 0.0-1.0,
-    "remarks": 0.0-1.0
+    "time_taken_hours": 0.0-1.0
   },
   "extraction_notes": "any notes about this specific row"
 }
@@ -55,20 +52,32 @@ Rules:
 """
 
 
-def encode_image_base64(file_path: str) -> tuple[str, str]:
+def get_document_images_base64(file_path: str) -> list[tuple[str, str]]:
     ext = Path(file_path).suffix.lower()
-    mime_map = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-        ".pdf": "application/pdf",
-    }
-    mime = mime_map.get(ext, "image/jpeg")
-    with open(file_path, "rb") as f:
-        data = base64.b64encode(f.read()).decode("utf-8")
-    return data, mime
+    
+    if ext == ".pdf":
+        images = []
+        doc = fitz.open(file_path)
+        for page_num in range(min(3, len(doc))):
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            b64_data = base64.b64encode(img_bytes).decode("utf-8")
+            images.append((b64_data, "image/png"))
+        doc.close()
+        return images
+    else:
+        mime_map = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+        }
+        mime = mime_map.get(ext, "image/jpeg")
+        with open(file_path, "rb") as f:
+            data = base64.b64encode(f.read()).decode("utf-8")
+        return [(data, mime)]
 
 
 async def extract_from_document(file_path: str) -> list[dict]:
@@ -86,19 +95,22 @@ async def extract_from_document(file_path: str) -> list[dict]:
     print(f"[DOCFLOW] extract_from_document called: file={file_path}, model={model}", flush=True)
     print(f"[DOCFLOW] API key present: {bool(api_key)} (length={len(api_key)})", flush=True)
 
-    b64_data, mime_type = encode_image_base64(file_path)
-    print(f"[DOCFLOW] Image encoded: mime={mime_type}, base64_len={len(b64_data)}", flush=True)
-    data_uri = f"data:{mime_type};base64,{b64_data}"
+    images_b64 = get_document_images_base64(file_path)
+    print(f"[DOCFLOW] Image(s) encoded: count={len(images_b64)}", flush=True)
+
+    content_list = []
+    for b64_data, mime_type in images_b64:
+        data_uri = f"data:{mime_type};base64,{b64_data}"
+        content_list.append({"type": "image_url", "image_url": {"url": data_uri}})
+    
+    content_list.append({"type": "text", "text": EXTRACTION_PROMPT})
 
     payload = {
         "model": model,
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": data_uri}},
-                    {"type": "text", "text": EXTRACTION_PROMPT},
-                ],
+                "content": content_list,
             }
         ],
         "temperature": 0.1,
