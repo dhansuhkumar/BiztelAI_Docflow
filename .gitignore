@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.env
+
+# Node
+node_modules/
+dist/
+.next/
+
+# Local files
+backend/uploads/*
+!backend/uploads/.gitkeep
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
