@@ -54,7 +54,7 @@ async def upload_document(
 
 
 async def process_document(doc_id: int, file_path: str):
-    """Background task: extract + validate, then save to DB."""
+    """Background task: extract ALL rows + validate each, then save to DB."""
     from app.models.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Document).where(Document.id == doc_id))
@@ -66,30 +66,34 @@ async def process_document(doc_id: int, file_path: str):
         await db.commit()
 
         try:
-            extracted = await extract_from_document(file_path)
-            confidence_scores = extracted.get("confidence_scores", {})
-            validation_errors = validate_record(extracted)
-            overall_conf = compute_overall_confidence(confidence_scores)
+            rows = await extract_from_document(file_path)
 
-            record = ExtractedRecord(
-                document_id=doc_id,
-                date=extracted.get("date"),
-                shift=extracted.get("shift"),
-                employee_number=extracted.get("employee_number"),
-                operation_code=extracted.get("operation_code"),
-                machine_number=extracted.get("machine_number"),
-                work_order_number=extracted.get("work_order_number"),
-                quantity_produced=extracted.get("quantity_produced"),
-                time_taken_hours=extracted.get("time_taken_hours"),
-                supervisor_name=extracted.get("supervisor_name"),
-                remarks=extracted.get("remarks"),
-                confidence_scores=confidence_scores,
-                validation_errors=validation_errors,
-                has_validation_errors=len([e for e in validation_errors if e["severity"] == "error"]) > 0,
-                overall_confidence=overall_conf,
-                raw_extraction=extracted,
-            )
-            db.add(record)
+            for row in rows:
+                confidence_scores = row.get("confidence_scores", {})
+                validation_errors = validate_record(row)
+                overall_conf = compute_overall_confidence(confidence_scores)
+
+                record = ExtractedRecord(
+                    document_id=doc_id,
+                    row_number=row.get("row_number", 1),
+                    date=row.get("date"),
+                    shift=row.get("shift"),
+                    employee_number=row.get("employee_number"),
+                    operation_code=row.get("operation_code"),
+                    machine_number=row.get("machine_number"),
+                    work_order_number=row.get("work_order_number"),
+                    quantity_produced=row.get("quantity_produced"),
+                    time_taken_hours=row.get("time_taken_hours"),
+                    supervisor_name=row.get("supervisor_name"),
+                    remarks=row.get("remarks"),
+                    confidence_scores=confidence_scores,
+                    validation_errors=validation_errors,
+                    has_validation_errors=len([e for e in validation_errors if e["severity"] == "error"]) > 0,
+                    overall_confidence=overall_conf,
+                    raw_extraction=row,
+                )
+                db.add(record)
+
             doc.status = "extracted"
             await db.commit()
 
@@ -129,12 +133,17 @@ async def get_document(doc_id: int, db: AsyncSession = Depends(get_db)):
     if not doc:
         raise HTTPException(404, "Document not found.")
 
-    rec_result = await db.execute(select(ExtractedRecord).where(ExtractedRecord.document_id == doc_id))
-    record = rec_result.scalar_one_or_none()
+    rec_result = await db.execute(
+        select(ExtractedRecord)
+        .where(ExtractedRecord.document_id == doc_id)
+        .order_by(ExtractedRecord.row_number)
+    )
+    records = rec_result.scalars().all()
 
     return {
         "document": doc_to_dict(doc),
-        "record": record_to_dict(record) if record else None,
+        "records": [record_to_dict(r) for r in records],
+        "record": record_to_dict(records[0]) if records else None,
     }
 
 
@@ -281,6 +290,7 @@ def record_to_dict(r: ExtractedRecord) -> dict:
     return {
         "id": r.id,
         "document_id": r.document_id,
+        "row_number": r.row_number,
         "date": r.date,
         "shift": r.shift,
         "employee_number": r.employee_number,

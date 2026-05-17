@@ -30,6 +30,7 @@ class ExtractedRecord(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     document_id = Column(Integer, nullable=False, index=True)
+    row_number = Column(Integer, default=1)
 
     # Core extracted fields
     date = Column(String, nullable=True)

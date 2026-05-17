@@ -1,19 +1,24 @@
-import anthropic
-import base64
-import json
 import os
+import json
+import httpx
+import base64
 from pathlib import Path
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-nano-12b-v2-vl:free")
+OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
-EXTRACTION_SYSTEM_PROMPT = """
+EXTRACTION_PROMPT = """
 You are an expert OCR and data extraction AI for manufacturing operational documents.
-Your job is to extract structured data from handwritten or semi-structured manufacturing documents.
+Extract ALL rows of data from this handwritten or semi-structured manufacturing document.
 
-Always respond with a single valid JSON object. No markdown, no explanation, just the JSON.
+The document may contain a table with multiple rows. Extract EVERY data row — do not skip any.
 
-The JSON must have this exact structure:
+Respond with ONLY a single valid JSON array. No markdown, no explanation, no backticks — just raw JSON.
+
+Each element in the array represents one row and must follow this exact structure:
 {
+  "row_number": integer (1-based),
   "date": "YYYY-MM-DD or null",
   "shift": "Morning | Afternoon | Night | null",
   "employee_number": "string or null",
@@ -36,23 +41,25 @@ The JSON must have this exact structure:
     "supervisor_name": 0.0-1.0,
     "remarks": 0.0-1.0
   },
-  "extraction_notes": "any observations about document quality, ambiguous fields, etc."
+  "extraction_notes": "any notes about this specific row"
 }
 
 Rules:
-- If a field is not visible or illegible, return null for the value and 0.0 for its confidence.
-- confidence_scores must reflect how certain you are (0.0 = cannot read, 1.0 = very clear).
-- For shift, normalize to exactly "Morning", "Afternoon", or "Night". If it says "1st shift" interpret as "Morning", "2nd" as "Afternoon", "3rd" as "Night".
-- For dates, convert any format (DD/MM/YY, MM-DD-YYYY, etc.) to YYYY-MM-DD.
-- For numeric fields (quantity, time), extract only the number.
-- Do not invent or guess field values — use null if unsure.
+- Return an array even if there is only one data row: [{ ... }]
+- Skip completely empty rows (all cells blank).
+- If a field is illegible or missing, set value to null and confidence to 0.0.
+- Normalize shift: I or 1st -> "Morning", II or 2nd -> "Afternoon", III or 3rd -> "Night".
+- Dates in the document are in DD/MM/YY or DD/MM/YYYY format (day first, then month, then year). Parse accordingly.
+- Normalize all dates to YYYY-MM-DD. If only one date is written for the whole table, use it for all rows.
+- For numeric fields extract only the number, no units.
+- Never invent or guess values — use null if unsure.
+- If a column value repeats across rows (e.g. same date, same shift), copy it to each row.
 """
 
 
-def encode_image(file_path: str) -> tuple[str, str]:
-    """Encode image to base64 and detect media type."""
+def encode_image_base64(file_path: str) -> tuple[str, str]:
     ext = Path(file_path).suffix.lower()
-    media_type_map = {
+    mime_map = {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
         ".png": "image/png",
@@ -60,67 +67,63 @@ def encode_image(file_path: str) -> tuple[str, str]:
         ".webp": "image/webp",
         ".pdf": "application/pdf",
     }
-    media_type = media_type_map.get(ext, "image/jpeg")
-
+    mime = mime_map.get(ext, "image/jpeg")
     with open(file_path, "rb") as f:
-        data = base64.standard_b64encode(f.read()).decode("utf-8")
+        data = base64.b64encode(f.read()).decode("utf-8")
+    return data, mime
 
-    return data, media_type
 
-
-async def extract_from_document(file_path: str) -> dict:
+async def extract_from_document(file_path: str) -> list[dict]:
     """
-    Send document to Claude Vision and extract structured operational data.
-    Returns the parsed JSON dict with extracted fields + confidence scores.
+    Send document to OpenRouter vision model and extract ALL rows as a list of dicts.
+    Returns a list — even single-row documents return a list of one.
     """
-    image_data, media_type = encode_image(file_path)
+    if not OPENROUTER_API_KEY:
+        raise ValueError("OPENROUTER_API_KEY environment variable is not set")
 
-    if media_type == "application/pdf":
-        # Claude supports PDF as document type
-        content = [
-            {
-                "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": "application/pdf",
-                    "data": image_data,
-                },
-            },
-            {
-                "type": "text",
-                "text": "Extract all operational data from this manufacturing document. Return only the JSON.",
-            },
-        ]
-    else:
-        content = [
-            {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": image_data,
-                },
-            },
-            {
-                "type": "text",
-                "text": "Extract all operational data from this manufacturing document. Return only the JSON.",
-            },
-        ]
+    b64_data, mime_type = encode_image_base64(file_path)
+    data_uri = f"data:{mime_type};base64,{b64_data}"
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1500,
-        system=EXTRACTION_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": content}],
-    )
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                    {"type": "text", "text": EXTRACTION_PROMPT},
+                ],
+            }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 3000,
+    }
 
-    raw_text = response.content[0].text.strip()
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
 
-    # Strip markdown fences if present
+    async with httpx.AsyncClient(base_url=OPENROUTER_BASE) as client:
+        response = await client.post(
+            "/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=180.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    raw_text = data["choices"][0]["message"]["content"].strip()
+
     if raw_text.startswith("```"):
-        raw_text = raw_text.split("```")[1]
-        if raw_text.startswith("json"):
-            raw_text = raw_text[4:]
+        lines = raw_text.split("\n")
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        raw_text = "\n".join(lines).strip()
 
-    extracted = json.loads(raw_text)
-    return extracted
+    parsed = json.loads(raw_text)
+
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+
+    return parsed
