@@ -74,7 +74,16 @@ async def process_document(doc_id: int, file_path: str):
             try:
                 print(f"[DOCFLOW] Calling extract_from_document for doc {doc_id}...", flush=True)
                 rows = await extract_from_document(file_path)
-                print(f"[DOCFLOW] Extraction returned {len(rows)} row(s) for document {doc_id}", flush=True)
+                print(f"[DOCFLOW] Extraction returned {len(rows)} raw row(s) for document {doc_id}", flush=True)
+
+                # Filter out completely blank rows (empty table lines the AI picked up)
+                DATA_FIELDS = [
+                    "date", "shift", "employee_number", "operation_code",
+                    "machine_number", "work_order_number", "quantity_produced",
+                    "time_taken_hours", "supervisor_name", "remarks"
+                ]
+                rows = [r for r in rows if any(r.get(f) not in (None, "", 0) for f in DATA_FIELDS)]
+                print(f"[DOCFLOW] After blank-row filter: {len(rows)} row(s) for document {doc_id}", flush=True)
 
                 for row in rows:
                     confidence_scores = row.get("confidence_scores", {})
